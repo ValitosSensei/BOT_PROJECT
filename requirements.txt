@@ -1,0 +1,2 @@
+pyTelegramBotAPI
+python-dotenv  # для роботи з .env (опціонально)
