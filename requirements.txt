@@ -1,2 +1,3 @@
 pyTelegramBotAPI
-python-dotenv  # для роботи з .env (опціонально)
+python-dotenv
+psycopg2-binary
