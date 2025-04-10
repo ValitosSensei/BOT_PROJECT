@@ -1,86 +1,148 @@
-import telebot
-from telebot import types
-import logging
-
-# Налаштування
 import os
-API_TOKEN = os.environ.get('API_TOKEN')
-ADMIN_IDS = [int(id) for id in os.environ.get('ADMIN_IDS', '').split(',')]
+import logging
+import psycopg2
+from psycopg2 import sql
+from telebot import TeleBot, types
+from dotenv import load_dotenv
+
+# Завантаження змінних оточення
+load_dotenv()
+
+# Налаштування логування
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# Ініціалізація бота
-bot = telebot.TeleBot(API_TOKEN)
+# Підключення до PostgreSQL
+def get_db_connection():
+    return psycopg2.connect(os.environ['DATABASE_URL'])
 
-# Тимочасне сховище даних
-users = {}
-products = [
-    {"id": 1, "name": "Товар 1", "price": 100, "description": "Опис товару 1"},
-    {"id": 2, "name": "Товар 2", "price": 200, "description": "Опис товару 2"}
-]
-orders = []
+# Ініціалізація бота
+bot = TeleBot(os.environ['API_TOKEN'])
+
+# Мови та локалізації
+LANGUAGES = {
+    'en': {
+        'welcome': "Welcome! Choose command:",
+        'product_list': "Available products:",
+        # ... інші переклади
+    },
+    'uk': {
+        'welcome': "Ласкаво просимо! Оберіть команду:",
+        'product_list': "Доступні товари:",
+        # ... інші переклади
+    }
+}
+
+# --- Допоміжні функції ---
+def get_user_language(user_id):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT language FROM users WHERE user_id = %s", (user_id,))
+            return cur.fetchone()[0] if cur.rowcount else 'uk'
+
+def log_user_action(user_id, action):
+    logger.info(f"User {user_id}: {action}")
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_logs (user_id, action) 
+                VALUES (%s, %s)
+            """, (user_id, action))
 
 # --- Обробники команд ---
 @bot.message_handler(commands=['start'])
-def send_welcome(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add('/start', '/help', '/catalog', '/info')
+def handle_start(message):
+    user_id = message.from_user.id
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (user_id, state, language) 
+                VALUES (%s, 'main_menu', 'uk')
+                ON CONFLICT (user_id) DO NOTHING
+            """, (user_id,))
     
-    bot.reply_to(message, "Ласкаво просимо! Оберіть команду:", reply_markup=markup)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(*['/catalog', '/help', '/info', '/language'])
+    
+    bot.send_message(
+        message.chat.id,
+        LANGUAGES[get_user_language(user_id)]['welcome'],
+        reply_markup=markup
+    )
+    log_user_action(user_id, "Started bot")
 
-@bot.message_handler(commands=['help'])
-def send_help(message):
-    help_text = """
-    Доступні команди:
-    /start - Початок роботи
-    /help - Допомога
-    /info - Інформація про бота
-    /catalog - Перегляд каталогу
-    /feedback - Залишити відгук
-    """
-    bot.reply_to(message, help_text)
-
-# Додайте інші обробники команд за аналогією
-
-# --- Інтерактивний каталог ---
+# --- Каталог товарів ---
 @bot.message_handler(commands=['catalog'])
-def show_catalog(message):
+def handle_catalog(message):
+    user_id = message.from_user.id
+    lang = get_user_language(user_id)
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, price FROM products")
+            products = cur.fetchall()
+    
     markup = types.InlineKeyboardMarkup()
     for product in products:
         markup.add(types.InlineKeyboardButton(
-            text=f"{product['name']} - {product['price']}₴",
-            callback_data=f"product_{product['id']}"))
-    bot.send_message(message.chat.id, "Оберіть товар:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('product_'))
-def product_details(call):
-    product_id = int(call.data.split('_')[1])
-    product = next(p for p in products if p['id'] == product_id)
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("Замовити", callback_data=f"order_{product_id}"))
+            text=f"{product[1]} - {product[2]}₴",
+            callback_data=f"product_{product[0]}"
+        ))
     
     bot.send_message(
-        call.message.chat.id,
-        f"{product['name']}\n\n{product['description']}\n\nЦіна: {product['price']}₴",
+        message.chat.id,
+        LANGUAGES[lang]['product_list'],
         reply_markup=markup
     )
+    log_user_action(user_id, "Opened catalog")
 
 # --- Адмін-меню ---
 @bot.message_handler(commands=['admin'])
-def admin_panel(message):
-    if message.from_user.id not in ADMIN_IDS:
+def handle_admin(message):
+    user_id = message.from_user.id
+    if user_id not in [int(id) for id in os.environ['ADMIN_IDS'].split(',')]:
         return
     
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add('/add_item', '/remove_item', '/orders')
+    markup.add(*['/add_product', '/remove_product', '/view_orders'])
+    
     bot.send_message(message.chat.id, "Адмін-панель", reply_markup=markup)
+    log_user_action(user_id, "Accessed admin panel")
 
-# Додайте інші функції адміністрування
+# --- Інтеграція з базою даних ---
+def init_db():
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    state VARCHAR(50),
+                    language VARCHAR(2)
+                )
+            """)
+            
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS products (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100),
+                    price NUMERIC,
+                    description TEXT
+                )
+            """)
+            
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_logs (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    action TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
 if __name__ == '__main__':
+    init_db()
+    logger.info("Starting bot...")
     bot.infinity_polling()
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-    logger.info("Запуск бота...")
-    bot.infinity_polling()
-
