@@ -3,9 +3,6 @@ import telebot
 from telebot import types
 from db import get_db_connection, init_db
 import logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
-logging.info(f"User {message.from_user.id} started bot")
-
 
 # Ініціалізація бота
 BOT_TOKEN = os.getenv("BOT_TOKEN")
