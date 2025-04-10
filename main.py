@@ -1,221 +1,180 @@
-import os
 import telebot
 from telebot import types
 import psycopg2
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 bot = telebot.TeleBot(BOT_TOKEN)
+ADMIN_IDS = [123456789]  # заміни на свій Telegram ID
 
-DB_URL = os.getenv("DATABASE_URL")
+# Підключення до бази
+conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+cur = conn.cursor()
 
-def get_db_connection():
-    return psycopg2.connect(DB_URL)
+# Створення таблиць
+cur.execute("""
+CREATE TABLE IF NOT EXISTS products (
+    id SERIAL PRIMARY KEY,
+    name TEXT,
+    description TEXT,
+    price NUMERIC
+);
+""")
 
-def create_tables():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-            id SERIAL PRIMARY KEY,
-            name TEXT,
-            price NUMERIC,
-            description TEXT
-        );
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            username TEXT,
-            product_id INT,
-            confirmed BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS feedback (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            username TEXT,
-            message TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
+cur.execute("""
+CREATE TABLE IF NOT EXISTS orders (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT,
+    username TEXT,
+    product_id INTEGER REFERENCES products(id)
+);
+""")
 
-def seed_products_if_empty():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM products")
-    if cur.fetchone()[0] == 0:
-        products = [
-            ("Ноутбук Lenovo", 18999.99, "15.6” FullHD, Intel i5, 8GB RAM, SSD 512GB"),
-            ("Смартфон Samsung A53", 12999.00, "6.5” AMOLED, 128GB, 5G"),
-            ("Навушники Sony WH-1000XM4", 8999.99, "Безпровідні з шумозаглушенням"),
-            ("Монітор LG 27\"", 7499.50, "27” IPS, 75Hz, FullHD"),
-            ("Клавіатура Logitech", 1299.00, "Механічна, RGB, USB")
-        ]
-        cur.executemany("INSERT INTO products (name, price, description) VALUES (%s, %s, %s)", products)
-        conn.commit()
-    cur.close()
-    conn.close()
+cur.execute("""
+CREATE TABLE IF NOT EXISTS feedback (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT,
+    username TEXT,
+    message TEXT
+);
+""")
+conn.commit()
 
+# Команда /start
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add('/catalog', '/help', '/info')
+    markup.add('/catalog', '/help', '/info', '/feedback')
     bot.send_message(message.chat.id,
-                     f"Привіт, {message.from_user.first_name}! 👋\nЯ — бот-магазин. Обери команду нижче:",
+                     f"Привіт, {message.from_user.first_name}! Я бот-магазин. Обери команду з меню.",
                      reply_markup=markup)
 
+# Команда /help
 @bot.message_handler(commands=['help'])
-def help_cmd(message):
-    bot.send_message(message.chat.id, """📌 Доступні команди:
-/start — почати
-/catalog — переглянути каталог
+def help_msg(message):
+    bot.send_message(message.chat.id, """
+Доступні команди:
+/start — запуск
+/catalog — каталог товарів
 /order — оформити замовлення
-/info — інформація про бота
 /feedback — залишити відгук
-/admin — меню адміністратора (для адмінів)
+/info — інформація про бота
+/admin — меню для адміну
 """)
 
+# Команда /info
 @bot.message_handler(commands=['info'])
-def info_cmd(message):
-    bot.send_message(message.chat.id, "🛒 Я — Telegram-магазин бот. Тут ти можеш переглядати товари та робити замовлення!")
+def info(message):
+    bot.send_message(message.chat.id, "Я простий Telegram бот-магазин з каталогом і замовленнями.")
 
+# Каталог
 @bot.message_handler(commands=['catalog'])
 def catalog(message):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT id, name, price FROM products")
-    for row in cur.fetchall():
-        prod_id, name, price = row
-        btn = types.InlineKeyboardMarkup()
-        btn.add(types.InlineKeyboardButton("Деталі", callback_data=f"details_{prod_id}"))
-        bot.send_message(message.chat.id, f"{name}\n💸 {price} грн", reply_markup=btn)
-    cur.close()
-    conn.close()
+    cur.execute("SELECT * FROM products")
+    products = cur.fetchall()
+    if not products:
+        bot.send_message(message.chat.id, "Каталог порожній.")
+        return
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("details_"))
-def show_details(call):
-    prod_id = int(call.data.split("_")[1])
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT name, price, description FROM products WHERE id=%s", (prod_id,))
-    product = cur.fetchone()
-    if product:
-        name, price, desc = product
+    for product in products:
+        product_id, name, desc, price = product
         btn = types.InlineKeyboardMarkup()
-        btn.add(types.InlineKeyboardButton("Замовити", callback_data=f"order_{prod_id}"))
-        bot.send_message(call.message.chat.id, f"📦 {name}\n💸 {price} грн\n📝 {desc}", reply_markup=btn)
-    cur.close()
-    conn.close()
+        btn.add(types.InlineKeyboardButton(f"Замовити {name}", callback_data=f"order_{product_id}"))
+        bot.send_message(message.chat.id, f"🛍️ {name}\n💬 {desc}\n💰 {price} грн", reply_markup=btn)
 
+# Обробка замовлення
 @bot.callback_query_handler(func=lambda call: call.data.startswith("order_"))
 def confirm_order(call):
-    prod_id = int(call.data.split("_")[1])
-    user = call.from_user
-    conn = get_db_connection()
-    cur = conn.cursor()
+    product_id = int(call.data.split("_")[1])
+    user_id = call.from_user.id
+    username = call.from_user.username or "NoUsername"
     cur.execute("INSERT INTO orders (user_id, username, product_id) VALUES (%s, %s, %s)",
-                (user.id, user.username, prod_id))
+                (user_id, username, product_id))
     conn.commit()
-    cur.close()
-    conn.close()
-    bot.send_message(call.message.chat.id, "✅ Замовлення оформлено. Адміністратор звʼяжеться з вами.")
-    for admin_id in ADMIN_IDS:
-        bot.send_message(admin_id, f"📥 НОВЕ ЗАМОВЛЕННЯ від @{user.username} (ID: {user.id}) на товар {prod_id}")
+    bot.answer_callback_query(call.id, "Замовлення прийнято!")
+    bot.send_message(call.message.chat.id, "✅ Ваше замовлення підтверджено!")
+    for admin in ADMIN_IDS:
+        bot.send_message(admin, f"Нове замовлення від @{username} на товар ID {product_id}")
 
+# Команда /order
+@bot.message_handler(commands=['order'])
+def user_order(message):
+    bot.send_message(message.chat.id, "Використай /catalog щоб замовити товар.")
+
+# Відгук
 @bot.message_handler(commands=['feedback'])
 def feedback(message):
-    bot.send_message(message.chat.id, "✍️ Напишіть ваш відгук:")
-    bot.register_next_step_handler(message, save_feedback)
+    msg = bot.send_message(message.chat.id, "Напиши свій відгук:")
+    bot.register_next_step_handler(msg, save_feedback)
 
 def save_feedback(message):
-    conn = get_db_connection()
-    cur = conn.cursor()
+    user_id = message.from_user.id
+    username = message.from_user.username or "NoUsername"
+    msg_text = message.text
     cur.execute("INSERT INTO feedback (user_id, username, message) VALUES (%s, %s, %s)",
-                (message.from_user.id, message.from_user.username, message.text))
+                (user_id, username, msg_text))
     conn.commit()
-    cur.close()
-    conn.close()
-    bot.send_message(message.chat.id, "Дякуємо за відгук!")
-    for admin_id in ADMIN_IDS:
-        bot.send_message(admin_id, f"📢 ВІДГУК від @{message.from_user.username}: {message.text}")
+    bot.send_message(message.chat.id, "Дякую за відгук!")
+    for admin in ADMIN_IDS:
+        bot.send_message(admin, f"Новий відгук від @{username}: {msg_text}")
 
+# Команда /admin
 @bot.message_handler(commands=['admin'])
-def admin_panel(message):
-    if message.from_user.id not in ADMIN_IDS:
-        return bot.send_message(message.chat.id, "⛔ Ти не адміністратор.")
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add('/add_item', '/remove_item', '/orders')
-    bot.send_message(message.chat.id, "🔧 Адмін-меню:", reply_markup=markup)
+def admin_menu(message):
+    if message.from_user.id in ADMIN_IDS:
+        bot.send_message(message.chat.id, "Адмін-команди:\n/add_item\n/remove_item\n/orders")
+    else:
+        bot.send_message(message.chat.id, "У вас немає доступу.")
 
+# Додавання товару
 @bot.message_handler(commands=['add_item'])
 def add_item(message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    bot.send_message(message.chat.id, "Введіть назву, ціну, опис через | (наприклад: Назва|999.99|Опис):")
-    bot.register_next_step_handler(message, save_new_product)
+    if message.from_user.id in ADMIN_IDS:
+        msg = bot.send_message(message.chat.id, "Введи товар у форматі: Назва | Опис | Ціна")
+        bot.register_next_step_handler(msg, save_item)
 
-def save_new_product(message):
+def save_item(message):
     try:
-        name, price, desc = message.text.split("|")
-        price = float(price)
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("INSERT INTO products (name, price, description) VALUES (%s, %s, %s)",
-                    (name.strip(), price, desc.strip()))
+        name, desc, price = message.text.split("|")
+        price = float(price.strip())
+        cur.execute("INSERT INTO products (name, description, price) VALUES (%s, %s, %s)",
+                    (name.strip(), desc.strip(), price))
         conn.commit()
-        cur.close()
-        conn.close()
         bot.send_message(message.chat.id, "✅ Товар додано.")
     except Exception as e:
-        bot.send_message(message.chat.id, "❌ Помилка. Спробуйте ще раз у форматі: Назва|999.99|Опис")
+        bot.send_message(message.chat.id, "⚠️ Помилка: " + str(e))
 
+# Видалення товару
 @bot.message_handler(commands=['remove_item'])
 def remove_item(message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    bot.send_message(message.chat.id, "Введіть ID товару для видалення:")
-    bot.register_next_step_handler(message, delete_product)
+    if message.from_user.id in ADMIN_IDS:
+        msg = bot.send_message(message.chat.id, "Введи ID товару для видалення:")
+        bot.register_next_step_handler(msg, delete_item)
 
-def delete_product(message):
+def delete_item(message):
     try:
-        prod_id = int(message.text)
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM products WHERE id=%s", (prod_id,))
+        product_id = int(message.text.strip())
+        cur.execute("DELETE FROM products WHERE id = %s", (product_id,))
         conn.commit()
-        cur.close()
-        conn.close()
         bot.send_message(message.chat.id, "🗑️ Товар видалено.")
     except:
-        bot.send_message(message.chat.id, "❌ Невірний ID.")
+        bot.send_message(message.chat.id, "⚠️ Некоректний ID.")
 
+# Перегляд замовлень
 @bot.message_handler(commands=['orders'])
-def view_orders(message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT o.id, o.user_id, o.username, p.name, o.created_at FROM orders o
-        JOIN products p ON o.product_id = p.id ORDER BY o.created_at DESC
-    """)
-    text = "\n".join([f"{row[0]}. @{row[2]} - {row[3]} ({row[4]})" for row in cur.fetchall()]) or "Немає замовлень."
-    cur.close()
-    conn.close()
-    bot.send_message(message.chat.id, f"📦 Замовлення:\n{text}")
+def orders(message):
+    if message.from_user.id in ADMIN_IDS:
+        cur.execute("SELECT * FROM orders")
+        orders = cur.fetchall()
+        if not orders:
+            bot.send_message(message.chat.id, "Немає замовлень.")
+        for o in orders:
+            bot.send_message(message.chat.id, f"ID: {o[0]} | User: @{o[2]} | Product ID: {o[3]}")
 
-# Ініціалізація
-create_tables()
-seed_products_if_empty()
+# Запуск бота
 bot.polling(none_stop=True)
