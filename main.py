@@ -3,6 +3,7 @@ from telebot import types
 import psycopg2
 import os
 from dotenv import load_dotenv
+from flask import Flask, request
 
 load_dotenv()
 
@@ -10,14 +11,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 bot = telebot.TeleBot(BOT_TOKEN)
-ADMIN_IDS = [385386611]  # заміни на свій Telegram ID
+ADMIN_IDS = [123456789]  # заміни на свій Telegram ID
 
 # Підключення до бази
 conn = psycopg2.connect(DATABASE_URL, sslmode='require')
 cur = conn.cursor()
 
 # Створення таблиць
-cur.execute("""
+cur.execute(""" 
 CREATE TABLE IF NOT EXISTS products (
     id SERIAL PRIMARY KEY,
     name TEXT,
@@ -176,5 +177,21 @@ def orders(message):
         for o in orders:
             bot.send_message(message.chat.id, f"ID: {o[0]} | User: @{o[2]} | Product ID: {o[3]}")
 
-# Запуск бота
-bot.polling(none_stop=True)
+# Flask сервер для Webhook
+app = Flask(__name__)
+
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def get_message():
+    json_str = request.get_data().decode('UTF-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "!", 200
+
+@app.route('/')
+def webhook():
+    return "Bot is running!", 200
+
+if __name__ == '__main__':
+    bot.remove_webhook()
+    bot.set_webhook(url="https://YOUR_DOMAIN/" + BOT_TOKEN)
+    app.run(host="0.0.0.0", port=5000)
