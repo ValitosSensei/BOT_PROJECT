@@ -1,223 +1,222 @@
+import os
 import telebot
 from telebot import types
-import os
+from db import get_db_connection, init_db
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+logging.info(f"User {message.from_user.id} started bot")
 
-# Завантаження API токену з змінних середовища
-API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 
-if not API_TOKEN:
-    raise Exception("Вкажіть TELEGRAM_API_TOKEN в змінних середовища!")
+# Ініціалізація бота
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN)
 
-bot = telebot.TeleBot(API_TOKEN)
+# Ініціалізація бази
+init_db()
 
-# Обробник команди /start
+# ======================
+# Команда /start
+# ======================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    welcome_text = (
-        "Вітаю! Я ваш бот-помічник.\n"
-        "Я можу допомогти з переглядом каталогу товарів, оформленням замовлень та іншими функціями.\n"
-        "Використайте /help для перегляду команд."
-    )
-    bot.reply_to(message, welcome_text)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add('/help', '/catalog', '/info', '/feedback')
+    bot.send_message(message.chat.id, "Привіт! Я бот-магазин 🎉", reply_markup=markup)
+    bot.send_message(message.chat.id, "Ось що я вмію:\n/help — список команд\n/catalog — каталог товарів")
 
-# Запуск бота (для використання поллингу)
-if __name__ == '__main__':
-    bot.polling(none_stop=True)
-
+# ======================
+# Команда /help
+# ======================
 @bot.message_handler(commands=['help'])
 def help_command(message):
-    help_text = (
-        "/start - Запустити бота\n"
-        "/help - Допомога\n"
-        "/info - Інформація про бота\n"
-        "/catalog - Перегляд каталогу товарів\n"
-        "/order - Оформлення замовлення\n"
-        "/feedback - Залишити відгук"
-    )
-    bot.reply_to(message, help_text)
+    bot.reply_to(message, "/start — почати\n/help — допомога\n/catalog — каталог\n/info — про бота\n/feedback — залишити відгук")
 
+# ======================
+# Команда /info
+# ======================
 @bot.message_handler(commands=['info'])
 def info_command(message):
-    info_text = (
-        "Я - Telegram бот для замовлення товарів та послуг.\n"
-        "Мої функції включають перегляд каталогу, оформлення замовлення, адміністрування та підтримку користувачів."
-    )
-    bot.reply_to(message, info_text)
+    bot.reply_to(message, "🤖 Це бот демонстраційного магазину. Тут ви можете переглянути товари та зробити замовлення!")
 
+# ======================
+# Команда /catalog
+# ======================
 @bot.message_handler(commands=['catalog'])
 def catalog_command(message):
-    # Створення інлайн клавіатури з прикладом товарів
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    # Приклад товарів
-    products = [
-        {"name": "Товар 1", "price": "100 грн", "desc": "Опис товару 1"},
-        {"name": "Товар 2", "price": "200 грн", "desc": "Опис товару 2"},
-    ]
-    for product in products:
-        button_text = f"{product['name']} - {product['price']}"
-        callback_data = f"product_{product['name']}"
-        markup.add(types.InlineKeyboardButton(button_text, callback_data=callback_data))
-    bot.send_message(message.chat.id, "Оберіть товар для перегляду деталей:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('product_'))
-def product_details_callback(call):
-    # Відображення детальної інформації про товар
-    product_name = call.data.split('_', 1)[1]
-    # Знайти деталі товару (зазвичай, через запит до бази даних)
-    product_info = f"Детальна інформація про {product_name}: \nЦіна: 100 грн \nОпис: Це приклад опису."
-    bot.send_message(call.message.chat.id, product_info)
-
-@bot.message_handler(commands=['order'])
-def order_command(message):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton("Підтвердити замовлення", callback_data="confirm_order"))
-    markup.add(types.InlineKeyboardButton("Скасувати замовлення", callback_data="cancel_order"))
-    bot.send_message(message.chat.id, "Ви бажаєте оформити замовлення?", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data in ["confirm_order", "cancel_order"])
-def order_confirmation_callback(call):
-    if call.data == "confirm_order":
-        # Надіслати інформацію адміністраторам
-        admin_message = f"Замовлення від користувача {call.from_user.username} ({call.from_user.id}) підтверджене."
-        # Для прикладу, надсилаємо повідомлення самому собі (адміністратору); згодом замініть на ID адміністратора(-ів)
-        bot.send_message(call.from_user.id, "Ваше замовлення оформлено. Очікуйте підтвердження від адміністратора.")
-        # Надсилання повідомлення адміністратору (наприклад, через список ID)
-        admin_ids = [123456789]  # Замініть на актуальні ID адміністраторів
-        for admin_id in admin_ids:
-            bot.send_message(admin_id, admin_message)
-    else:
-        bot.send_message(call.message.chat.id, "Замовлення скасовано.")
-
-ADMIN_IDS = [123456789]  # Список ID адміністраторів
-
-@bot.message_handler(commands=['admin'])
-def admin_command(message):
-    if message.from_user.id in ADMIN_IDS:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add("/add_item", "/remove_item", "/orders")
-        bot.send_message(message.chat.id, "Меню адміністратора:", reply_markup=markup)
-    else:
-        bot.reply_to(message, "У вас немає доступу до адміністративного меню.")
-
-@bot.message_handler(commands=['add_item'])
-def add_item_command(message):
-    if message.from_user.id in ADMIN_IDS:
-        bot.reply_to(message, "Надішліть дані нового товару у форматі: Назва | Ціна | Опис")
-        # Далі – логіка для збереження товару (можна реалізувати через стан чи базу даних)
-    else:
-        bot.reply_to(message, "Ви не є адміністратором!")
-
-@bot.message_handler(commands=['remove_item'])
-def remove_item_command(message):
-    if message.from_user.id in ADMIN_IDS:
-        bot.reply_to(message, "Надішліть назву товару для видалення.")
-        # Далі – логіка пошуку товару і його видалення з бази даних
-    else:
-        bot.reply_to(message, "Ви не є адміністратором!")
-
-@bot.message_handler(commands=['orders'])
-def orders_command(message):
-    if message.from_user.id in ADMIN_IDS:
-        # Реалізуйте вибір замовлень з бази даних
-        bot.reply_to(message, "Список замовлень:")
-    else:
-        bot.reply_to(message, "Ви не маєте доступу до списку замовлень!")
-
-@bot.message_handler(commands=['hello'])
-def hello_command(message):
-    bot.reply_to(message, "Привіт! Як можу допомогти?")
-
-@bot.message_handler(func=lambda m: "Які товари доступні?" in m.text)
-def available_products(message):
-    bot.reply_to(message, "Використайте команду /catalog для перегляду товарів.")
-
-@bot.message_handler(commands=['feedback'])
-def feedback_command(message):
-    bot.reply_to(message, "Будь ласка, залиште свій відгук:")
-    # Можна реалізувати збір і збереження відгуків для передачі адміністраторам
-
-def get_main_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("/start", "/catalog")
-    markup.row("/info", "/help")
-    return markup
-
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    welcome_text = (
-        "Вітаю! Я ваш бот-помічник.\n"
-        "Я можу допомогти з переглядом каталогу товарів, оформленням замовлень та іншими функціями.\n"
-        "Використайте /help для перегляду команд."
-    )
-    bot.send_message(message.chat.id, welcome_text, reply_markup=get_main_keyboard())
-
-def validate_price(price_str):
-    try:
-        price = float(price_str)
-        return price > 0
-    except ValueError:
-        return False
-
-@bot.message_handler(commands=['add_item'])
-def add_item_command(message):
-    if message.from_user.id in ADMIN_IDS:
-        msg = bot.send_message(message.chat.id, "Надішліть дані нового товару у форматі: Назва | Ціна | Опис")
-        bot.register_next_step_handler(msg, process_new_item)
-    else:
-        bot.reply_to(message, "Ви не є адміністратором!")
-
-def process_new_item(message):
-    try:
-        name, price_str, description = map(str.strip, message.text.split('|'))
-        if not validate_price(price_str):
-            bot.reply_to(message, "Некоректне значення ціни. Спробуйте ще раз.")
-            return
-        # Логіка збереження товару (наприклад, у базу даних)
-        bot.reply_to(message, f"Товар {name} додано до каталогу!")
-    except Exception as e:
-        bot.reply_to(message, "Невірний формат даних. Будь ласка, використовуйте формат: Назва | Ціна | Опис")
-
-@bot.message_handler(commands=['pay'])
-def pay_command(message):
-    # Створення рахунку для користувача (симуляція)
-    bot.send_message(message.chat.id, "Рахунок створено. Будь ласка, перейдіть за посиланням для оплати: https://example.com/payment")
-    
-@bot.callback_query_handler(func=lambda call: call.data in ["confirm_payment", "cancel_payment"])
-def payment_callback(call):
-    if call.data == "confirm_payment":
-        bot.send_message(call.message.chat.id, "Оплата підтверджена. Дякуємо за замовлення!")
-    else:
-        bot.send_message(call.message.chat.id, "Оплата скасована.")
-
-import psycopg2
-from psycopg2 import sql
-
-# Припустимо, що DATABASE_URL містить повний URI для підключення
-DATABASE_URL = os.getenv('DATABASE_URL')
-if not DATABASE_URL:
-    raise Exception("DATABASE_URL не задана у змінних середовища!")
-
-def get_db_connection():
-    conn = psycopg2.connect(DATABASE_URL)
-    return conn
-
-# Приклад функції додавання товару до бази даних
-def add_product_to_db(name, price, description):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO products (name, price, description) VALUES (%s, %s, %s)",
-        (name, price, description)
-    )
-    conn.commit()
-    cursor.close()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, price FROM products")
+    products = cur.fetchall()
+    cur.close()
     conn.close()
 
-import logging
+    if not products:
+        bot.send_message(message.chat.id, "Каталог поки що порожній 😢")
+        return
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger()
+    for prod in products:
+        prod_id, name, price = prod
+        markup = types.InlineKeyboardMarkup()
+        btn = types.InlineKeyboardButton("Детальніше", callback_data=f"product_{prod_id}")
+        markup.add(btn)
+        bot.send_message(message.chat.id, f"{name}\nЦіна: {price} грн", reply_markup=markup)
 
-@bot.message_handler(func=lambda message: True)
-def log_user_activity(message):
-    logger.info(f"Користувач {message.from_user.id} запустив команду: {message.text}")
+# ======================
+# Обробка натискань кнопок (деталі товару)
+# ======================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("product_"))
+def callback_product_detail(call):
+    prod_id = call.data.split("_")[1]
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT name, price, description FROM products WHERE id = %s", (prod_id,))
+    prod = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if prod:
+        name, price, desc = prod
+        text = f"🛍 {name}\n💵 Ціна: {price} грн\n📄 Опис: {desc}"
+        bot.send_message(call.message.chat.id, text)
+
+# ======================
+# Команда /feedback
+# ======================
+@bot.message_handler(commands=['feedback'])
+def feedback_command(message):
+    msg = bot.send_message(message.chat.id, "✍️ Залиште свій відгук:")
+    bot.register_next_step_handler(msg, save_feedback)
+
+def save_feedback(message):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO feedback (user_id, message) VALUES (%s, %s)", (message.from_user.id, message.text))
+    conn.commit()
+    cur.close()
+    conn.close()
+    bot.send_message(message.chat.id, "Дякуємо за відгук! 🙌")
+
+# ======================
+# Запуск бота
+# ======================
+print("Бот запущено...")
+bot.polling()
+
+# 🔒 Список ID адміністраторів
+ADMINS = [123456789]  # заміни на свій Telegram ID
+
+# 🛒 Команда /order — імітація оформлення замовлення
+@bot.message_handler(commands=['order'])
+def order_command(message):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name FROM products")
+    products = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    markup = types.InlineKeyboardMarkup()
+    for prod in products:
+        markup.add(types.InlineKeyboardButton(prod[1], callback_data=f"order_{prod[0]}"))
+
+    bot.send_message(message.chat.id, "Оберіть товар для замовлення:", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("order_"))
+def handle_order(call):
+    product_id = int(call.data.split("_")[1])
+    user_id = call.from_user.id
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO orders (user_id, product_id) VALUES (%s, %s)", (user_id, product_id))
+    conn.commit()
+
+    # Повідомлення для адміна
+    for admin in ADMINS:
+        bot.send_message(admin, f"Нове замовлення від користувача {user_id}\nТовар ID: {product_id}")
+
+    bot.send_message(call.message.chat.id, "✅ Замовлення оформлено!")
+    cur.close()
+    conn.close()
+
+# 🔧 /admin меню
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if message.from_user.id in ADMINS:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add('/add_item', '/remove_item', '/orders')
+        bot.send_message(message.chat.id, "Панель адміністратора 🛠", reply_markup=markup)
+    else:
+        bot.send_message(message.chat.id, "⛔️ У вас немає прав доступу.")
+
+# ➕ Додавання товару
+@bot.message_handler(commands=['add_item'])
+def add_item(message):
+    if message.from_user.id not in ADMINS:
+        return bot.send_message(message.chat.id, "⛔️ Ви не адміністратор.")
+    msg = bot.send_message(message.chat.id, "Введіть товар у форматі:\nНазва, Ціна, Опис")
+    bot.register_next_step_handler(msg, save_new_product)
+
+def save_new_product(message):
+    try:
+        name, price, desc = message.text.split(",", 2)
+        price = float(price.strip())  # Валідація
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO products (name, price, description) VALUES (%s, %s, %s)", (name.strip(), price, desc.strip()))
+        conn.commit()
+        cur.close()
+        conn.close()
+        bot.send_message(message.chat.id, "✅ Товар додано.")
+    except:
+        bot.send_message(message.chat.id, "❌ Невірний формат. Спробуйте знову.")
+
+# ❌ Видалення товару
+@bot.message_handler(commands=['remove_item'])
+def remove_item(message):
+    if message.from_user.id not in ADMINS:
+        return bot.send_message(message.chat.id, "⛔️ Ви не адміністратор.")
+    msg = bot.send_message(message.chat.id, "Введіть ID товару для видалення:")
+    bot.register_next_step_handler(msg, delete_product)
+
+def delete_product(message):
+    try:
+        prod_id = int(message.text)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM products WHERE id = %s", (prod_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        bot.send_message(message.chat.id, "✅ Товар видалено.")
+    except:
+        bot.send_message(message.chat.id, "❌ Помилка при видаленні.")
+
+# 📦 Список замовлень
+@bot.message_handler(commands=['orders'])
+def orders_list(message):
+    if message.from_user.id not in ADMINS:
+        return
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT orders.id, orders.user_id, products.name 
+        FROM orders JOIN products ON orders.product_id = products.id
+    """)
+    orders = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    if not orders:
+        bot.send_message(message.chat.id, "Немає замовлень.")
+    else:
+        text = "\n".join([f"#{o[0]} — Користувач: {o[1]}, Товар: {o[2]}" for o in orders])
+        bot.send_message(message.chat.id, text)
+
+# 💬 Прості відповіді на запити
+@bot.message_handler(func=lambda msg: msg.text.lower() in ["як зробити замовлення?", "які товари доступні?"])
+def simple_answers(message):
+    if "замовлення" in message.text:
+        bot.send_message(message.chat.id, "Щоб зробити замовлення, скористайся командою /order.")
+    else:
+        bot.send_message(message.chat.id, "Доступні товари можна переглянути через /catalog.")
