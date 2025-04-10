@@ -193,5 +193,5 @@ def webhook():
 
 if __name__ == '__main__':
     bot.remove_webhook()
-    bot.set_webhook(url="https://YOUR_DOMAIN/" + BOT_TOKEN)
+    bot.set_webhook(url="https://api.render.com/deploy/srv-cvrnikogjchc73be3edg?key=hxrvgd1UW54" + BOT_TOKEN)
     app.run(host="0.0.0.0", port=5000)
