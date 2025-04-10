@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS products (
 """)
 
 cur.execute("""
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE IF NOT EXISTS purchases (
     id SERIAL PRIMARY KEY,
     user_id BIGINT,
     username TEXT,
@@ -93,7 +93,7 @@ def confirm_order(call):
     product_id = int(call.data.split("_")[1])
     user_id = call.from_user.id
     username = call.from_user.username or "NoUsername"
-    cur.execute("INSERT INTO orders (user_id, username, product_id) VALUES (%s, %s, %s)",
+    cur.execute("INSERT INTO purchases (user_id, username, product_id) VALUES (%s, %s, %s)",
                 (user_id, username, product_id))
     conn.commit()
     bot.answer_callback_query(call.id, "Замовлення прийнято!")
@@ -169,7 +169,7 @@ def delete_item(message):
 @bot.message_handler(commands=['orders'])
 def orders(message):
     if message.from_user.id in ADMIN_IDS:
-        cur.execute("SELECT * FROM orders")
+        cur.execute("SELECT * FROM purchases")
         orders = cur.fetchall()
         if not orders:
             bot.send_message(message.chat.id, "Немає замовлень.")
